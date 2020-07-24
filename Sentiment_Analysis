@@ -1,0 +1,126 @@
+import tensorflow as tf
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+import os
+import pickle
+import numpy as np
+
+Data =  pickle.load( open( "imdb_arabized.p", "rb" ) )
+training_sentences = Data[0]
+training_labels = Data[1]
+testing_sentences = Data[2]
+testing_labels = Data[3]
+training_labels_final = np.array(training_labels)
+testing_labels_final = np.array(testing_labels)
+
+vocab_size = 10000
+embedding_dim = 16
+max_length = 500
+trunc_type='post'
+oov_tok = "<OOV>"
+
+tokenizer = Tokenizer(num_words = vocab_size, oov_token=oov_tok)
+tokenizer.fit_on_texts(training_sentences)
+word_index = tokenizer.word_index
+sequences = tokenizer.texts_to_sequences(training_sentences)
+padded = pad_sequences(sequences,maxlen=max_length, truncating=trunc_type)
+testing_sequences = tokenizer.texts_to_sequences(testing_sentences)
+testing_padded = pad_sequences(testing_sequences,maxlen=max_length)
+
+
+# =============================================================================
+# 
+# =============================================================================
+reverse_word_index = dict([(value, key) for (key, value) in word_index.items()])
+
+
+model = tf.keras.Sequential([
+    tf.keras.layers.Embedding(vocab_size, embedding_dim, input_length=max_length),
+    tf.keras.layers.Conv1D(filters=3, kernel_size=3,
+                      strides=1, padding="causal",
+                      activation="relu",
+                      batch_input_shape=[None,None, 1]),
+     
+   #tf.keras.layers.LSTM(20, return_sequences=True),
+    tf.keras.layers.Flatten(),
+    #tf.keras.layers.Dense(6, activation='relu'),
+    tf.keras.layers.Dense(1, activation='tanh')
+])
+
+
+rmp = tf.keras.optimizers.RMSprop(learning_rate=0.001, rho=0.9, momentum=0.0, epsilon=1e-07, centered=False, name='RMSprop')
+model.compile(loss='binary_crossentropy',optimizer="adagrad" ,metrics=['accuracy'])
+model.summary()
+
+num_epochs = 400
+history = model.fit(padded, training_labels_final, epochs=num_epochs, validation_data=(testing_padded, testing_labels_final))
+#history.save("/home/aziz/Desktop/his_ar_imdb.h5")
+
+def review_rating(score, decoded_review):
+    if float(score) >= 0.9:
+        print('Review: {}\nSentiment: Strongly Positive\nScore: {}'.format(decoded_review, score))
+    elif float(score) >= 0.7 and float(score) < 0.9:
+        print('Review: {}\nSentiment: Positive\nScore: {}'.format(decoded_review, score))
+    elif float(score) >= 0.5 and float(score) < 0.7:
+        print('Review: {}\nSentiment: Okay\nScore: {}'.format(decoded_review, score))
+    else:
+        print('Review: {}\nSentiment: Negative\nScore: {}'.format(decoded_review, score))
+    print('\n\n')
+
+
+def decode_review(text_list):
+    word_index = tokenizer.word_index
+    sequence = tokenizer.texts_to_sequences(text_list)
+    data = pad_sequences(sequence, maxlen=500)
+    
+    # decode the words
+    reverse_word_index = dict([(value, key) for (key, value) in word_index.items()])
+    decoded_review = ' '.join([reverse_word_index.get(i, '?') for i in sequence[0]])
+    return decoded_review, data
+
+def score_review(source=None, file_type=None):
+    '''
+    source: the text, as either a string or a list of strings
+    file_type: (str): indicating whether we expecting a file containing the
+    text data or a directory containing a list files holding the text
+    options: 'file' or 'dir'
+    '''
+    text_list = list()
+    if isinstance(source, str) and file_type is None:
+        text_list.append(source)
+        decoded_review, data = decode_review(text_list)
+        # make prediction
+        score = model.predict(data)[0][0]
+        review_rating(score, decoded_review)
+    
+    if isinstance(source, list) and file_type is None:
+        for item in source:
+            text_list = list()
+            text_list.append(item)
+            decoded_review, data = decode_review(text_list)
+            score = model.predict(data)[0][0]
+            review_rating(score, decoded_review)
+    
+    if isinstance(source, str) and file_type == 'file':
+        file_data = open(source).read()
+        text_list.append(file_data)
+        decoded_review, data = decode_review(text_list)
+        # make prediction
+        score = model.predict(data)[0][0]
+        review_rating(score, decoded_review)
+    
+    if isinstance(source, str) and file_type == 'dir':
+        file_content_holder = list()
+        for fname in os.listdir(source):
+            if fname[-4:] == '.txt':
+                f = open(os.path.join(source, fname))
+                file_content_holder.append(f.read())
+                f.close()
+        for item in file_content_holder:
+            text_list = list()
+            text_list.append(item)
+            decoded_review, data = decode_review(text_list)
+            score = model.predict(data)[0][0]
+            review_rating(score, decoded_review)
+
+score_review('/home/aziz/Desktop/newsa/news2', file_type='file')
